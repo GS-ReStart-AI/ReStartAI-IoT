@@ -1,0 +1,66 @@
+# --- SO (Windows/macOS/Linux)
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Icon?
+desktop.ini
+
+# --- Python / Build
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+pip-wheel-metadata/
+.pyre/
+.pdm.toml
+__pypackages__/
+
+# --- Virtualenvs
+.venv/
+venv/
+env/
+ENV/
+
+# --- Caches & logs
+.cache/
+*.log
+logs/
+tmp/
+*.tmp
+
+# --- Editor/IDE
+.vscode/
+!.vscode/launch.json
+!.vscode/settings.json
+.vscode/rest-client.env.json
+.idea/
+*.iml
+
+# --- Env & Secrets
+.env
+.env.*
+!.env.example
+
+# --- Docker (opcionais locais)
+.docker/
+docker-compose.override.yml
+
+# --- Misc
+*.swp
+*.swo
+*~
