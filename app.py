@@ -1,7 +1,13 @@
 from __future__ import annotations
-import os, asyncio, json, re, time, hashlib, uuid
+import os
+import asyncio
+import json
+import re
+import time
+import hashlib
+import uuid
 from enum import Enum
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 from collections import deque
 
@@ -12,7 +18,6 @@ from openai import OpenAI
 from openai._exceptions import OpenAIError
 import logging
 
-# ---------- Config ----------
 load_dotenv(override=True)
 
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
@@ -20,10 +25,11 @@ MODEL = (os.getenv("MODEL") or "gpt-4o-mini").strip()
 INTERNAL_KEY = (os.getenv("INTERNAL_KEY") or "").strip()
 OPENAI_TIMEOUT = float(os.getenv("OPENAI_TIMEOUT", "10"))
 OPENAI_MAX_TOKENS = int(os.getenv("OPENAI_MAX_TOKENS", "80"))
+RESUME_MAX_TOKENS = int(os.getenv("RESUME_MAX_TOKENS", "512"))
 OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.2"))
 OPENAI_BASE_URL = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
 
-CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "900"))           
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "900"))
 CACHE_MAX_KEYS = int(os.getenv("CACHE_MAX_KEYS", "1000"))
 RATE_LIMIT_PER_MIN = int(os.getenv("RATE_LIMIT_PER_MIN", "6"))
 CB_MAX_FAILS = int(os.getenv("CB_MAX_FAILS", "3"))
@@ -36,20 +42,23 @@ logging.basicConfig(
 )
 log = logging.getLogger("restartai.insight")
 
-# ---------- Schemas ----------
+
 class ActionTag(str, Enum):
     apply = "apply"
     explore = "explore"
     study = "study"
+
 
 class Metrics(BaseModel):
     jobsViewedToday: int = Field(ge=0)
     applyClicksToday: int = Field(ge=0)
     lastEventAt: datetime
 
+
 class Event(BaseModel):
     type: str
     ts: datetime
+
 
 class Profile(BaseModel):
     areas: List[str] = Field(default_factory=list)
@@ -57,11 +66,13 @@ class Profile(BaseModel):
     city: Optional[str] = None
     gaps: List[str] = Field(default_factory=list)
 
+
 class BestOpportunity(BaseModel):
     role: Optional[str] = None
     city: Optional[str] = None
     match: Optional[int] = Field(default=None, ge=0, le=100)
     missingSkill: Optional[str] = None
+
 
 class InsightRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -71,27 +82,53 @@ class InsightRequest(BaseModel):
     profile: Profile
     bestOpportunity: Optional[BestOpportunity] = None
 
+
 class InsightResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     insight: str = Field(max_length=120)
     actionTag: ActionTag
 
-# ---------- App ----------
-app = FastAPI(title="ReStartAI-Insight-Min+", version="1.1.0")
 
-# ---------- Security ----------
+class JobSearchQuery(BaseModel):
+    title: str
+    query: str
+    platforms: List[str] = Field(default_factory=list)
+
+
+class ResumeSummaryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    usuarioId: str
+    curriculoTexto: str = Field(min_length=50, max_length=20000)
+
+
+class ResumeSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    areas: List[str] = Field(default_factory=list)
+    best_role: str
+    roles: List[str] = Field(default_factory=list)
+    seniority: str
+    years_of_experience: int = Field(ge=0)
+    skills_detected: List[str] = Field(default_factory=list)
+    job_search_queries: List[JobSearchQuery] = Field(default_factory=list)
+
+
+app = FastAPI(title="ReStartAI-Insight-Min+", version="1.3.0")
+
+
 async def assert_internal_key(x_internal_key: str | None = Header(default=None, alias="X-Internal-Key")) -> None:
     if not INTERNAL_KEY:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Config inválida")
     if not x_internal_key or x_internal_key != INTERNAL_KEY:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Não autorizado")
 
-# ---------- Correlation-ID ----------
+
 def get_request_id(x_request_id: str | None = Header(default=None, alias="X-Request-Id")) -> str:
     return x_request_id or str(uuid.uuid4())
 
-# ---------- Rate limit por usuário ----------
+
 _rate: Dict[str, deque] = {}
+
+
 def check_rate(user_id: str) -> None:
     now = time.monotonic()
     q = _rate.setdefault(user_id, deque())
@@ -101,8 +138,9 @@ def check_rate(user_id: str) -> None:
         raise HTTPException(status_code=429, detail="Muitas requisições")
     q.append(now)
 
-# ---------- Cache TTL + idempotência ----------
+
 _cache: Dict[str, tuple[float, Dict[str, str]]] = {}
+
 
 def _cache_key(req: InsightRequest) -> str:
     base = {
@@ -111,31 +149,37 @@ def _cache_key(req: InsightRequest) -> str:
         "profile": req.profile.model_dump(mode="json"),
         "bestOpportunity": req.bestOpportunity.model_dump(mode="json") if req.bestOpportunity else None,
     }
-    s = json.dumps(base, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    s = json.dumps(base, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
+
 def cache_get(key: str) -> Optional[Dict[str, str]]:
-    item = _cache.get(key)
-    if not item: return None
-    exp, val = item
+    v = _cache.get(key)
+    if not v:
+        return None
+    exp, val = v
     if time.time() > exp:
         _cache.pop(key, None)
         return None
     return val
 
+
 def cache_put(key: str, val: Dict[str, str]) -> None:
     if len(_cache) >= CACHE_MAX_KEYS:
-        _cache.pop(next(iter(_cache)))  # LRU básica por inserção
+        _cache.pop(next(iter(_cache)))
     _cache[key] = (time.time() + CACHE_TTL_SECONDS, val)
 
-# ---------- Circuit breaker ----------
+
 _cb_state = {"fails": 0, "first_ts": 0.0, "open_until": 0.0}
+
 
 def cb_is_open() -> bool:
     return time.time() < _cb_state["open_until"]
 
+
 def cb_on_success() -> None:
     _cb_state.update({"fails": 0, "first_ts": 0.0, "open_until": 0.0})
+
 
 def cb_on_failure() -> None:
     now = time.time()
@@ -147,7 +191,7 @@ def cb_on_failure() -> None:
     if _cb_state["fails"] >= CB_MAX_FAILS:
         _cb_state["open_until"] = now + CB_COOLDOWN_SEC
 
-# ---------- Prompts ----------
+
 SYSTEM_PROMPT = (
     'Voce e o "Gerador de Insights" do ReStart.AI, um app que ajuda pessoas a se recolocar rapido.\n'
     "Contexto do produto:\n"
@@ -160,10 +204,11 @@ SYSTEM_PROMPT = (
     "2) PT-BR, direto, sem emojis e sem quebras de linha.\n"
     "3) Use apenas metrics, lastEvents, profile, bestOpportunity. Nao invente PII.\n"
     '4) Personalize citando papel/area e cidade quando possivel (ex.: "Analista de CX Jr em Sao Paulo").\n'
-    '5) actionTag: "apply" se viu varias vagas e nao aplicou ou acabou de ver a melhor; "explore" baixa atividade; "study" se houver gap/missingSkill.\n'
+    '5) actionTag: "apply" se viu varias vagas e nao aplicou; "explore" com baixa atividade; "study" se houver gap/missingSkill.\n'
     "6) Dados insuficientes: dica generica acionavel (explore), <=120 chars.\n"
     '7) Nao inclua chaves alem de "insight" e "actionTag".'
 )
+
 USER_TEMPLATE = (
     "Gere o insight considerando os dados do usuario no ReStart.AI.\n\n"
     "metrics:\n{metrics}\n\n"
@@ -172,36 +217,112 @@ USER_TEMPLATE = (
     "bestOpportunity (opcional):\n{bestopp}\n"
 )
 
-# ---------- OpenAI ----------
+RESUME_SYSTEM_PROMPT = (
+    "Você é um orientador de carreira do ReStart.AI, um app que ajuda pessoas a se recolocar rápido.\n"
+    "Sua tarefa é analisar um currículo (texto bruto) e devolver um JSON que oriente uma transição de carreira REALISTA.\n"
+    "\n"
+    "Princípios centrais:\n"
+    "- Você deve se basear NO QUE A PESSOA JÁ FEZ de verdade: experiências, cursos, estágios, voluntariado e objetivos declarados.\n"
+    "- Primeiro identifique a ÁREA PRINCIPAL ATUAL da pessoa (onde ela já atua ou atuou mais tempo).\n"
+    "- Depois sugira áreas COMPATÍVEIS para transição, reaproveitando ao máximo as mesmas habilidades.\n"
+    "- NUNCA sugira uma área que exija conhecimento que não aparece em nenhum lugar do currículo.\n"
+    "\n"
+    "Exemplos de coerência:\n"
+    "- Se a pessoa é professora de Matemática, você pode sugerir outros papéis ligados a educação, reforço escolar,\n"
+    "  conteúdo de exatas, coordenação pedagógica inicial, mas NÃO \"professora de História\" do nada.\n"
+    "- Se a pessoa é tia de condução escolar, você pode sugerir papéis como monitora escolar, auxiliar em escola,\n"
+    "  atendimento ao cliente, recepção, serviços, hospitalidade; não desenvolvimento de software.\n"
+    "- Se a pessoa escreve que quer ser barista e tem experiências em atendimento, considere fortemente papéis\n"
+    "  em cafeteria, atendimento ao público, CX, hospitalidade.\n"
+    "\n"
+    "Sobre tecnologia:\n"
+    "- Só sugira áreas como Desenvolvimento Mobile, Desenvolvimento Back-end, Front-end, Dados & BI, Ciência de Dados,\n"
+    "  QA, DevOps, Produto Digital ou TI avançada se houver indícios CLAROS no currículo, como:\n"
+    "  linguagens (Java, C#, Python, JavaScript, TypeScript, SQL), frameworks (React, React Native, Flutter, .NET, Spring),\n"
+    "  menção explícita a desenvolvimento, programação, sistemas, banco de dados, análise de dados, ciência de dados, etc.\n"
+    "- Para sugerir Desenvolvimento Mobile especificamente, exija coisas como: React Native, Flutter, Kotlin, Swift, Android, iOS,\n"
+    "  ou menção clara a apps mobile. Se não houver isso, NÃO coloque Desenvolvimento Mobile como área.\n"
+    "- Se o currículo falar só \"desenvolvedor\" de forma genérica, você pode sugerir \"Desenvolvimento de Software\" como área,\n"
+    "  mas não invente um foco (mobile, dados, etc.) que não aparece.\n"
+    "\n"
+    "Sobre áreas e papéis:\n"
+    "- As áreas devem ser amplas, por exemplo: Educação, CX / Atendimento, Vendas, Operações & Automação, Logística,\n"
+    "  Serviços, Hospitalidade, Administrativo, Saúde, TI / Desenvolvimento de Software, Dados & BI, Marketing & Conteúdo, etc.\n"
+    "- \"best_role\" deve ser um papel que a pessoa consiga alcançar em poucos meses, com o histórico atual e,\n"
+    "  no máximo, um reforço de estudo de curto prazo. Nada de saltos irreais.\n"
+    "- Sempre escolha papéis de entrada (junior ou estágio), exceto se houver sinais muito fortes de liderança/senioridade.\n"
+    "\n"
+    "Restrições finais:\n"
+    "- Se o currículo não traz nenhuma pista de tecnologia, NÃO sugira papéis de TI.\n"
+    "- Se o currículo é todo em educação infantil, não desloque a pessoa para áreas muito distantes sem explicação.\n"
+    "- Prefira transições curtas e lógicas, que aproveitem habilidades como comunicação, organização, cuidado com pessoas,\n"
+    "  atenção a detalhes, responsabilidade, etc.\n"
+    "\n"
+    "Sobre a saída:\n"
+    "- Você deve retornar APENAS um JSON, sem texto extra, seguindo exatamente a estrutura pedida.\n"
+    "- Não inclua explicações textuais fora do JSON.\n"
+)
+
+RESUME_USER_TEMPLATE = (
+    "Leia o currículo abaixo e devolva APENAS um JSON com a estrutura a seguir:\n\n"
+    "{schema}\n\n"
+    "Interpretação obrigatória:\n"
+    "- Identifique a área principal atual da pessoa com base nas experiências descritas.\n"
+    "- Só sugira áreas e papéis que tenham relação clara com o currículo.\n"
+    "- Para cada papel sugerido, só mantenha se você conseguir justificar mentalmente\n"
+    "  quais experiências ou habilidades do currículo realmente dão suporte a esse papel.\n"
+    "- Se tiver dúvida entre sugerir algo \"da moda\" e algo simples porém coerente, escolha o caminho mais coerente.\n"
+    "- years_of_experience deve refletir a soma aproximada de experiência relevante para as áreas sugeridas.\n"
+    "- job_search_queries devem ser buscas que a pessoa possa usar em sites de vagas no Brasil (LinkedIn, Indeed, Gupy),\n"
+    "  por exemplo: \"Atendente de Cafeteria Jr São Paulo\".\n"
+    "\n"
+    "Currículo (texto bruto):\n"
+    "{curriculo}\n"
+)
+
+
 class AIServiceError(RuntimeError):
-    def __init__(self, msg: str): super().__init__(msg); self.public_msg = msg
+    def __init__(self, msg: str):
+        super().__init__(msg)
+        self.public_msg = msg
+
 
 def _client() -> OpenAI:
-    kw = {"api_key": OPENAI_API_KEY, "timeout": OPENAI_TIMEOUT}
-    if OPENAI_BASE_URL: kw["base_url"] = OPENAI_BASE_URL
+    kw: Dict[str, Any] = {"api_key": OPENAI_API_KEY, "timeout": OPENAI_TIMEOUT}
+    if OPENAI_BASE_URL:
+        kw["base_url"] = OPENAI_BASE_URL
     return OpenAI(**kw)
+
 
 def _build_messages(req: InsightRequest) -> List[Dict[str, str]]:
     payload = USER_TEMPLATE.format(
         metrics=json.dumps(req.metrics.model_dump(mode="json"), ensure_ascii=False),
         events=json.dumps([e.model_dump(mode="json") for e in req.lastEvents], ensure_ascii=False),
         profile=json.dumps(req.profile.model_dump(mode="json"), ensure_ascii=False),
-        bestopp=json.dumps(req.bestOpportunity.model_dump(mode="json") if req.bestOpportunity else None, ensure_ascii=False),
+        bestopp=json.dumps(req.bestOpportunity.model_dump(mode="json"), ensure_ascii=False) if req.bestOpportunity else "null",
     )
-    return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": payload}]
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": payload},
+    ]
+
 
 _ALLOWED = {"apply", "explore", "study"}
+
 
 def _extract_json(s: str) -> Dict[str, Any]:
     try:
         return json.loads(s)
     except json.JSONDecodeError:
         m = re.search(r"\{.*\}", s, re.DOTALL)
-        if not m: raise
+        if not m:
+            raise
         return json.loads(m.group(0))
 
+
 def _validate_out(obj: Dict[str, Any]) -> Dict[str, str]:
-    if not isinstance(obj, dict): raise AIServiceError("Formato inválido")
+    if not isinstance(obj, dict):
+        raise AIServiceError("Formato inválido")
     k = set(obj.keys())
     if k != {"insight", "actionTag"}:
         if "insight" in obj and "actionTag" in obj:
@@ -210,21 +331,28 @@ def _validate_out(obj: Dict[str, Any]) -> Dict[str, str]:
             raise AIServiceError("Formato inválido")
     insight = str(obj["insight"]).replace("\n", " ").strip()
     tag = str(obj["actionTag"]).strip()
-    if not (0 < len(insight) <= 120): raise AIServiceError("Insight fora do limite")
-    if tag not in _ALLOWED: raise AIServiceError("actionTag inválida")
+    if not (0 < len(insight) <= 120):
+        raise AIServiceError("Insight fora do limite")
+    if tag not in _ALLOWED:
+        raise AIServiceError("actionTag inválida")
     return {"insight": insight, "actionTag": tag}
 
+
 async def _generate(req: InsightRequest) -> Dict[str, str]:
-    if not OPENAI_API_KEY: raise AIServiceError("OPENAI_API_KEY ausente")
-    if cb_is_open(): raise AIServiceError("Circuito aberto")
+    if not OPENAI_API_KEY:
+        raise AIServiceError("OPENAI_API_KEY ausente")
+    if cb_is_open():
+        raise AIServiceError("Circuito aberto")
     msgs = _build_messages(req)
     cli = _client()
     for _ in range(2):
         try:
             r = await asyncio.to_thread(
                 cli.chat.completions.create,
-                model=MODEL, messages=msgs,
-                temperature=OPENAI_TEMPERATURE, max_tokens=OPENAI_MAX_TOKENS,
+                model=MODEL,
+                messages=msgs,
+                temperature=OPENAI_TEMPERATURE,
+                max_tokens=OPENAI_MAX_TOKENS,
             )
             content = r.choices[0].message.content or ""
             out = _validate_out(_extract_json(content))
@@ -232,37 +360,156 @@ async def _generate(req: InsightRequest) -> Dict[str, str]:
             return out
         except (OpenAIError, TimeoutError, json.JSONDecodeError, AIServiceError):
             cb_on_failure()
-            msgs += [{"role": "system", "content": 'Responda apenas JSON com "insight" e "actionTag". Insight <=120.'}]
+            msgs.append(
+                {
+                    "role": "system",
+                    "content": 'Responda apenas JSON com "insight" e "actionTag". Insight <=120.',
+                }
+            )
             continue
     raise AIServiceError("Falha ao gerar insight")
 
-# ---------- Fallback inteligente ----------
+
+def _validate_resume_out(obj: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(obj, dict):
+        raise AIServiceError("Formato inválido para resumo de currículo")
+    areas = obj.get("areas") or []
+    roles = obj.get("roles") or []
+    best_role = obj.get("best_role") or (roles[0] if roles else "")
+    seniority = obj.get("seniority") or "junior"
+    years = obj.get("years_of_experience") or 0
+    skills = obj.get("skills_detected") or []
+    queries = obj.get("job_search_queries") or []
+
+    if not isinstance(areas, list):
+        areas = [str(areas)]
+    if not isinstance(roles, list):
+        roles = [str(roles)]
+    if not isinstance(skills, list):
+        skills = [str(skills)]
+
+    norm_queries: List[Dict[str, Any]] = []
+    for q in queries:
+        if not isinstance(q, dict):
+            continue
+        title = str(q.get("title") or "Vagas recomendadas")
+        query = str(q.get("query") or best_role or "vagas junior")
+        platforms = q.get("platforms") or ["linkedin"]
+        if not isinstance(platforms, list):
+            platforms = [str(platforms)]
+        norm_queries.append({"title": title, "query": query, "platforms": platforms})
+
+    if not best_role and roles:
+        best_role = roles[0]
+
+    return {
+        "areas": [str(a) for a in areas][:5],
+        "best_role": str(best_role),
+        "roles": [str(r) for r in roles][:8],
+        "seniority": str(seniority),
+        "years_of_experience": int(years) if years is not None else 0,
+        "skills_detected": [str(s) for s in skills][:30],
+        "job_search_queries": norm_queries[:5],
+    }
+
+
+async def _generate_resume(req: ResumeSummaryRequest) -> Dict[str, Any]:
+    if not OPENAI_API_KEY:
+        raise AIServiceError("OPENAI_API_KEY ausente")
+    if cb_is_open():
+        raise AIServiceError("Circuito aberto")
+    schema = (
+        '{"areas":["string"],'
+        '"best_role":"string",'
+        '"roles":["string"],'
+        '"seniority":"junior|pleno|senior|estagio",'
+        '"years_of_experience":1,'
+        '"skills_detected":["string"],'
+        '"job_search_queries":[{"title":"string","query":"string","platforms":["linkedin","indeed","gupy"]}]}'
+    )
+    msgs = [
+        {"role": "system", "content": RESUME_SYSTEM_PROMPT},
+        {"role": "user", "content": RESUME_USER_TEMPLATE.format(schema=schema, curriculo=req.curriculoTexto)},
+    ]
+    cli = _client()
+    for _ in range(2):
+        try:
+            r = await asyncio.to_thread(
+                cli.chat.completions.create,
+                model=MODEL,
+                messages=msgs,
+                temperature=OPENAI_TEMPERATURE,
+                max_tokens=RESUME_MAX_TOKENS,
+            )
+            content = r.choices[0].message.content or ""
+            obj = _extract_json(content)
+            out = _validate_resume_out(obj)
+            cb_on_success()
+            return out
+        except (OpenAIError, TimeoutError, json.JSONDecodeError, AIServiceError):
+            cb_on_failure()
+            msgs.append(
+                {
+                    "role": "system",
+                    "content": "Responda apenas o JSON especificado, sem texto extra.",
+                }
+            )
+            continue
+    raise AIServiceError("Falha ao gerar resumo de currículo")
+
+
 def _choose_tag(req: InsightRequest) -> str:
     has_gap = bool(req.profile.gaps) or (req.bestOpportunity and req.bestOpportunity.missingSkill)
-    if has_gap: return "study"
+    if has_gap:
+        return "study"
     many_views_no_apply = req.metrics.jobsViewedToday >= 3 and req.metrics.applyClicksToday == 0
     saw_best = any(e.type == "view_best_opportunity" for e in req.lastEvents)
-    if many_views_no_apply or saw_best: return "apply"
+    if many_views_no_apply or saw_best:
+        return "apply"
     return "explore"
 
+
 def _phrase(tag: str, req: InsightRequest) -> str:
-    role = (req.bestOpportunity.role if req.bestOpportunity and req.bestOpportunity.role else (req.profile.roles[0] if req.profile.roles else None))
-    city = (req.bestOpportunity.city if req.bestOpportunity and req.bestOpportunity.city else req.profile.city)
-    tgt = f"{role} em {city}" if role and city else (role or city or "na sua área")
+    tgt = req.bestOpportunity.role if req.bestOpportunity and req.bestOpportunity.role else "no seu papel alvo"
     if tag == "apply":
         s = f"Aplique para {tgt}; você já analisou boas opções hoje."
     elif tag == "study":
-        gap = (req.bestOpportunity.missingSkill if req.bestOpportunity and req.bestOpportunity.missingSkill else (req.profile.gaps[0] if req.profile.gaps else "uma skill chave"))
+        gap = (
+            req.bestOpportunity.missingSkill
+            if req.bestOpportunity and req.bestOpportunity.missingSkill
+            else (req.profile.gaps[0] if req.profile.gaps else "uma skill chave")
+        )
         s = f"Estude {gap} para elevar seu match e abrir mais vagas em {tgt}."
     else:
         s = f"Explore novas vagas {tgt} e ajuste filtros para melhorar o match."
     return s[:120]
 
+
 def _fallback(req: InsightRequest) -> InsightResponse:
     tag = _choose_tag(req)
-    return InsightResponse(insight=_phrase(tag, req), actionTag=tag)  # type: ignore[arg-type]
+    return InsightResponse(insight=_phrase(tag, req), actionTag=tag)
 
-# ---------- Endpoints ----------
+
+@app.post("/resume-summary", response_model=ResumeSummaryResponse)
+async def post_resume_summary(
+    req: ResumeSummaryRequest,
+    response: Response,
+    _auth: None = Depends(assert_internal_key),
+    request_id: str = Depends(get_request_id),
+):
+    response.headers["X-Request-Id"] = request_id
+    check_rate(req.usuarioId)
+    try:
+        out = await _generate_resume(req)
+        return ResumeSummaryResponse(**out)
+    except AIServiceError as e:
+        raise HTTPException(status_code=503, detail=e.public_msg)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail="Erro ao gerar resumo de currículo")
+
+
 @app.post("/insight", response_model=InsightResponse)
 async def post_insight(
     req: InsightRequest,
@@ -301,9 +548,11 @@ async def post_insight(
         log.error(f"error rid={request_id} uid={req.userId} err={type(e).__name__} tag={out['actionTag']} ms={took}")
         return InsightResponse(**out)
 
+
 @app.get("/healthz")
 async def healthz():
     return {"status": "ok", "model": MODEL}
+
 
 @app.get("/readyz")
 async def readyz():
