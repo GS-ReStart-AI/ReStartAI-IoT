@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import logging
 from typing import Any, Dict, List
 
 from app.core.circuit import cb_is_open, cb_on_failure, cb_on_success
@@ -10,13 +11,15 @@ from app.core.openai_client import chat_completion, AIServiceError
 from app.core.prompts import RESUME_SYSTEM_PROMPT, RESUME_USER_TEMPLATE
 from app.domain.models import ResumeSummaryRequest, ResumeSummaryResponse
 
+log = logging.getLogger(__name__)
+
 
 def _extract_json(raw: str) -> Dict[str, Any]:
     """
     Tenta extrair JSON da resposta da IA.
 
-    - Primeiro tenta json.loads direto
-    - Se falhar, tenta pegar o primeiro {...} com regex
+    - Primeiro tenta dar json.loads direto.
+    - Se falhar, tenta achar o primeiro bloco {...} com regex.
     """
     raw = raw.strip()
 
@@ -31,47 +34,65 @@ def _extract_json(raw: str) -> Dict[str, Any]:
 
 def _validate_resume_out(obj: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Normaliza e valida a saída da IA para resumo de currículo.
-
-    Garante tipos corretos, valores padrão e limites básicos.
+    Normaliza/valida o JSON de saída do modelo para caber em ResumeSummaryResponse.
     """
     if not isinstance(obj, dict):
         raise AIServiceError("Formato inválido para resumo de currículo")
 
     areas = obj.get("areas") or []
-    roles = obj.get("roles") or []
-    best_role = obj.get("best_role") or (roles[0] if roles else "")
-    seniority = obj.get("seniority") or "junior"
-    years = obj.get("years_of_experience") or 0
-    skills = obj.get("skills_detected") or []
-    queries = obj.get("job_search_queries") or []
-
     if not isinstance(areas, list):
-        areas = [str(areas)]
+        areas = [areas]
+    areas = [str(a).strip() for a in areas if str(a).strip()]
+
+    best_role = obj.get("best_role") or obj.get("bestRole") or ""
+    best_role = str(best_role).strip()
+
+    roles = obj.get("roles") or []
     if not isinstance(roles, list):
-        roles = [str(roles)]
+        roles = [roles]
+    roles = [str(r).strip() for r in roles if str(r).strip()]
+
+    seniority = obj.get("seniority") or ""
+    seniority = str(seniority).strip()
+
+    years = obj.get("years_of_experience") or obj.get("yearsOfExperience") or 0
+    try:
+        years_int = int(years)
+    except (TypeError, ValueError):
+        years_int = 0
+    if years_int < 0:
+        years_int = 0
+
+    skills = obj.get("skills_detected") or obj.get("skillsDetected") or []
     if not isinstance(skills, list):
-        skills = [str(skills)]
+        skills = [skills]
+    skills = [str(s).strip() for s in skills if str(s).strip()]
 
+    raw_queries = obj.get("job_search_queries") or obj.get("jobSearchQueries") or []
     norm_queries: List[Dict[str, Any]] = []
-    for q in queries:
-        if not isinstance(q, dict):
-            continue
 
-        title = str(q.get("title") or "Vagas recomendadas")
-        query = str(q.get("query") or best_role or "vagas junior")
-        platforms = q.get("platforms") or ["linkedin"]
+    if isinstance(raw_queries, list):
+        for q in raw_queries:
+            if not isinstance(q, dict):
+                continue
 
-        if not isinstance(platforms, list):
-            platforms = [str(platforms)]
+            title = str(q.get("title") or "").strip()
+            query = str(q.get("query") or "").strip()
+            platforms = q.get("platforms") or []
+            if not isinstance(platforms, list):
+                platforms = [platforms]
+            platforms = [str(p).strip() for p in platforms if str(p).strip()]
 
-        norm_queries.append(
-            {
-                "title": title,
-                "query": query,
-                "platforms": platforms,
-            }
-        )
+            if not title and not query:
+                continue
+
+            norm_queries.append(
+                {
+                    "title": title,
+                    "query": query,
+                    "platforms": platforms,
+                }
+            )
 
     if not best_role and roles:
         best_role = roles[0]
@@ -81,7 +102,7 @@ def _validate_resume_out(obj: Dict[str, Any]) -> Dict[str, Any]:
         "best_role": str(best_role),
         "roles": [str(r) for r in roles][:8],
         "seniority": str(seniority),
-        "years_of_experience": int(years) if years is not None else 0,
+        "years_of_experience": years_int,
         "skills_detected": [str(s) for s in skills][:30],
         "job_search_queries": norm_queries[:5],
     }
@@ -131,6 +152,9 @@ async def generate_resume_summary(req: ResumeSummaryRequest) -> ResumeSummaryRes
                 messages=messages,
                 max_tokens=settings.RESUME_MAX_TOKENS,
             )
+            # log bruto (só pra debug; se quiser, pode comentar depois)
+            log.info("RAW RESUME RESPONSE: %s", raw)
+
             obj = _extract_json(raw)
             out_dict = _validate_resume_out(obj)
 
@@ -140,6 +164,8 @@ async def generate_resume_summary(req: ResumeSummaryRequest) -> ResumeSummaryRes
         except (json.JSONDecodeError, AIServiceError, TimeoutError, Exception) as e:
             last_error = e
             cb_on_failure()
+            log.exception("Erro ao gerar resumo de currículo: %s", e)
+
             messages.append(
                 {
                     "role": "system",
