@@ -81,7 +81,7 @@ Fluxo simplificado:
 ---
 
 <p align="center">
-  <img src="img/tela.gif.gif" width="50%">
+  <img src="img/tela.gif.gif" width="30%" height="800">
 </p>
 
 🧠 Papel da IA (neste serviço FastAPI)
@@ -237,3 +237,4 @@ X-Internal-Key: <INTERNAL_KEY>
 
 Isso evita que qualquer pessoa externa chame diretamente o serviço de IA.
 ---
+
