@@ -19,6 +19,11 @@ A ideia é ser um **atalho inteligente**:
 > currículo → papel-alvo claro → ação focada
 
 ---
+### 🎥 Vídeo da Solução: <br>
+
+Link: 
+
+---
 
 <p align="center">
   <img src="img/gitimg.png" width="70%">
@@ -170,7 +175,7 @@ No restante da solução:
 ### 1. Clonar o repositório
 
 ```bash
-git clone https://github.com/<seu-usuario>/ReStartAI-IoT.git
+git clone https://github.com/GS-ReStart-AI/ReStartAI-IoT.git
 cd ReStartAI-IoT
 ```
 
@@ -237,4 +242,5 @@ X-Internal-Key: <INTERNAL_KEY>
 
 Isso evita que qualquer pessoa externa chame diretamente o serviço de IA.
 ---
+
 
