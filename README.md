@@ -241,6 +241,11 @@ X-Internal-Key: <INTERNAL_KEY>
 - Se a chave estiver errada ou ausente, a API responde com **401 Unauthorized**.
 
 Isso evita que qualquer pessoa externa chame diretamente o serviço de IA.
+
 ---
 
+## 👥 Equipe:
+
+* ⭐️ **Valéria Conceição Dos Santos** — RM: **557177**  
+* ⭐️ **Mirela Pinheiro Silva Rodrigues** — RM: **558191**
 
