@@ -1,0 +1,23 @@
+# 1. Imagem base do Python
+FROM python:3.11-slim
+
+# 2. Diretório de trabalho dentro do container
+WORKDIR /app
+
+# 3. Dependências de sistema (se precisar compilar libs Python)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# 4. Copia o requirements.txt e instala as libs Python
+COPY requirements.txt /app/
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 5. Copia o resto do código para dentro do container
+COPY . /app
+
+# 6. Expõe a porta em que o uvicorn vai rodar
+EXPOSE 8000
+
+# 7. Comando para iniciar a API (sem --reload em produção)
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
