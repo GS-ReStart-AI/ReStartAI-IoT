@@ -23,8 +23,9 @@ A ideia é ser um **atalho inteligente**:
 
 Link: https://youtu.be/X3jqNJHc9zc
 
-Link Deploy: https://restartai-iot-web.azurewebsites.net/docs
+Link Deploy: https://restartai-iot-web.azurewebsites.net/docs <br>
 InternalKet: minha-internal-key
+
 ---
 
 <p align="center">
@@ -250,6 +251,7 @@ Isso evita que qualquer pessoa externa chame diretamente o serviço de IA.
 
 * ⭐️ **Valéria Conceição Dos Santos** — RM: **557177**  
 * ⭐️ **Mirela Pinheiro Silva Rodrigues** — RM: **558191**
+
 
 
 
