@@ -21,7 +21,7 @@ A ideia é ser um **atalho inteligente**:
 ---
 ### 🎥 Vídeo da Solução: <br>
 
-Link: 
+Link: https://youtu.be/X3jqNJHc9zc
 
 ---
 
@@ -248,4 +248,5 @@ Isso evita que qualquer pessoa externa chame diretamente o serviço de IA.
 
 * ⭐️ **Valéria Conceição Dos Santos** — RM: **557177**  
 * ⭐️ **Mirela Pinheiro Silva Rodrigues** — RM: **558191**
+
 
