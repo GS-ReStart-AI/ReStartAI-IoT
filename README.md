@@ -28,10 +28,6 @@ InternalKet: minha-internal-key
 
 ---
 
-<p align="center">
-  <img src="img/gitimg.png" width="70%">
-</p>
-
 🎯 Problema que resolvemos
 --------------------------
 
@@ -246,11 +242,72 @@ X-Internal-Key: <INTERNAL_KEY>
 Isso evita que qualquer pessoa externa chame diretamente o serviço de IA.
 
 ---
+## /insight – Request 
+
+```json
+{
+  "userId": "user-982311",
+  "metrics": {
+    "jobsViewedToday": 3,
+    "applyClicksToday": 0,
+    "lastEventAt": "2025-11-23T14:32:10Z"
+  },
+  "lastEvents": [
+    {
+      "type": "job_view",
+      "ts": "2025-11-23T14:32:10Z"
+    },
+    {
+      "type": "job_view",
+      "ts": "2025-11-23T14:25:43Z"
+    },
+    {
+      "type": "job_view",
+      "ts": "2025-11-23T14:10:01Z"
+    }
+  ],
+  "profile": {
+    "areas": [
+      "Tecnologia",
+      "Suporte ao Cliente"
+    ],
+    "roles": [
+      "Analista de Suporte",
+      "Service Desk"
+    ],
+    "city": "Rio de Janeiro",
+    "gaps": [
+      "Certificação ITIL",
+      "Inglês avançado"
+    ]
+  },
+  "bestOpportunity": {
+    "role": "Analista de Suporte Júnior",
+    "city": "Rio de Janeiro",
+    "match": 76,
+    "missingSkill": "ITIL básico"
+  }
+}
+```
+
+---
+
+## /resume-summary – Request 
+
+```json
+{
+  "usuarioId": "user-982311",
+  "curriculoTexto": "Profissional de tecnologia com 2 anos de experiência em suporte ao usuário, abertura e acompanhamento de chamados, resolução de incidentes de primeiro nível e configuração básica de redes. Atuei em service desk, suporte remoto e presencial, com foco em atendimento humanizado e SLA. Conhecimento em Windows, Pacote Office, ferramentas de ticket e noções de redes."
+}
+```
+
+
 
 ## 👥 Equipe:
 
 * ⭐️ **Valéria Conceição Dos Santos** — RM: **557177**  
 * ⭐️ **Mirela Pinheiro Silva Rodrigues** — RM: **558191**
+
 
 
 
